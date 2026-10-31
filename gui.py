@@ -103,6 +103,9 @@ class NeoTorchStudio:
 
         self.page = "studio"
         self.reallife_mode = True  # standaard max realisme
+        self.create_mode = "model"  # "model" | "image"
+        self.result_image: Optional[pygame.Surface] = None
+        self.result_image_path: Optional[Path] = None
         self.gallery_files: List[Path] = []
         self.gallery_scroll = 0
         self.ultra_spp = 96
@@ -111,9 +114,9 @@ class NeoTorchStudio:
         self.caret_on = True
         self.caret_t = 0.0
         self.chat: List[ChatLine] = [
-            ChatLine("ai", "Welkom bij NeoTorch — REAL LIFE mode aan."),
-            ChatLine("ai", "Pagina's: Studio · Gallery · Ultra · Real Life."),
-            ChatLine("sys", "bv. 'echte rode draak', 'levensechte ninja', 'blauwe kat'"),
+            ChatLine("ai", "Welkom bij NeoTorch — kies 3D of Afbeelding."),
+            ChatLine("ai", "Afbeelding = fotorealistische render van je scene."),
+            ChatLine("sys", "bv. 'rode robot in een bos' of 'storm boven een kasteel'"),
         ]
         self.status = "Klaar"
         self.last_cost = 0
@@ -139,6 +142,8 @@ class NeoTorchStudio:
         self.export_stl_btn = pygame.Rect(0, 0, 0, 0)
         self.photo_btn = pygame.Rect(0, 0, 0, 0)
         self.page_btn = pygame.Rect(0, 0, 0, 0)
+        self.mode_model_btn = pygame.Rect(0, 0, 0, 0)
+        self.mode_image_btn = pygame.Rect(0, 0, 0, 0)
         self.layout()
         self._refresh_gallery()
         self._update_estimate()
@@ -175,6 +180,10 @@ class NeoTorchStudio:
         )
 
         pad = 14
+        mode_y = self.ai_rect.bottom - 148
+        mw = (self.ai_rect.width - pad * 2 - 8) // 2
+        self.mode_model_btn = pygame.Rect(self.ai_rect.left + pad, mode_y, mw, 28)
+        self.mode_image_btn = pygame.Rect(self.mode_model_btn.right + 8, mode_y, mw, 28)
         self.input_rect = pygame.Rect(
             self.ai_rect.left + pad,
             self.ai_rect.bottom - 108,
@@ -198,9 +207,11 @@ class NeoTorchStudio:
         raw = self.input_text.strip() or "model"
         prompt = self._effective_prompt(raw) if self.input_text.strip() else raw
         cost, shape, diff = self.generator.estimate_cost(prompt)
+        if self.create_mode == "image":
+            cost = min(25, cost + 6)  # path-trace toeslag
         plan = self.generator.parse(prompt)
         self.last_cost = cost
-        self.last_shape = shape
+        self.last_shape = shape + (" · IMG" if self.create_mode == "image" else " · 3D")
         self.last_diff = diff
         self.last_verts_est = self.generator.estimate_verts(prompt)
         cols = list(plan.colors)
@@ -248,6 +259,13 @@ class NeoTorchStudio:
         p = prompt.strip()
         if self.reallife_mode and "reallife" not in p.lower() and "echt" not in p.lower():
             p = f"{p} reallife levend fotorealistisch"
+        if self.create_mode == "image":
+            # Force scene + photoreal for image pipeline
+            low = p.lower()
+            if "scene" not in low and "landschap" not in low:
+                p = f"{p} scene"
+            if "fotorealistisch" not in low and "photoreal" not in low:
+                p = f"{p} fotorealistisch"
         return p
 
     def handle_event(self, event: pygame.event.Event) -> None:
@@ -274,7 +292,15 @@ class NeoTorchStudio:
             self.preview.handle_event(event, self.preview_rect)
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.page in ("studio", "real") and self.gen_btn.collidepoint(event.pos):
+            if self.page in ("studio", "real") and self.mode_model_btn.collidepoint(event.pos):
+                self.create_mode = "model"
+                self.status = "Mode: 3D model"
+                self._update_estimate()
+            elif self.page in ("studio", "real") and self.mode_image_btn.collidepoint(event.pos):
+                self.create_mode = "image"
+                self.status = "Mode: fotoreal afbeelding"
+                self._update_estimate()
+            elif self.page in ("studio", "real") and self.gen_btn.collidepoint(event.pos):
                 self.generate()
             elif self.page in ("studio", "real", "ultra") and self.export_obj_btn.collidepoint(event.pos):
                 self.export("obj")
@@ -335,6 +361,8 @@ class NeoTorchStudio:
             return
 
         cost, shape, diff = self.generator.estimate_cost(prompt)
+        if self.create_mode == "image":
+            cost = min(25, cost + 6)
         self.last_cost, self.last_shape, self.last_diff = cost, shape, diff
 
         if not self.wallet.can_afford(cost):
@@ -347,8 +375,11 @@ class NeoTorchStudio:
             self.status = "Tokens op"
             return
 
-        self.chat.append(ChatLine("user", prompt))
-        self.status = "Genereren…"
+        self.chat.append(ChatLine("user", self.input_text.strip()))
+        if self.create_mode == "image":
+            self.status = "Scene → fotoreal afbeelding…"
+        else:
+            self.status = "Genereren…"
         self.draw()
         pygame.display.flip()
 
@@ -367,18 +398,44 @@ class NeoTorchStudio:
             bits.append(f"mods={','.join(sorted(plan.modifiers))}")
         n_col = sum(max(1, len(a.colors)) for a in plan.actors) + len(plan.colors)
         bits.append(f"multi-color×{max(n_col, 4)}")
-        self.chat.append(
-            ChatLine(
-                "ai",
-                f"Klaar: {mesh.name} · {diff} · −{cost} tok · "
-                f"{mesh.vertex_count:,} verts · ".replace(",", ".")
-                + " · ".join(bits),
+
+        if self.create_mode == "image":
+            self.chat.append(
+                ChatLine(
+                    "ai",
+                    f"Scene klaar ({mesh.vertex_count} verts) — path tracing…",
+                )
             )
-        )
-        self.status = f"Model: {mesh.name}"
+            self.draw()
+            pygame.display.flip()
+            img_path = self._render_image_from_mesh(mesh, open_viewers=True)
+            if img_path is not None:
+                self.chat.append(
+                    ChatLine("ai", f"Fotoreal afbeelding klaar → {img_path.name} · −{cost} tok")
+                )
+                self.status = f"Afbeelding: {img_path.name}"
+                self.export_msg = f"IMG: {img_path.name}"
+                self.export_t = 4.0
+            else:
+                self.chat.append(ChatLine("sys", "Afbeelding-render mislukt — 3D blijft beschikbaar."))
+                self.status = f"Model: {mesh.name}"
+        else:
+            self.result_image = None
+            self.result_image_path = None
+            self.chat.append(
+                ChatLine(
+                    "ai",
+                    f"Klaar: {mesh.name} · {diff} · −{cost} tok · "
+                    f"{mesh.vertex_count:,} verts · ".replace(",", ".")
+                    + " · ".join(bits),
+                )
+            )
+            self.status = f"Model: {mesh.name}"
+
         self.input_text = ""
         self._update_estimate()
         self.scroll = 10_000  # spring naar onderkant
+        self._refresh_gallery()
 
     def export(self, fmt: str) -> None:
         mesh = self.preview.full_mesh or self.preview.mesh
@@ -395,6 +452,37 @@ class NeoTorchStudio:
         self.export_msg = f"Opgeslagen: {path.name}"
         self.export_t = 2.5
         self.chat.append(ChatLine("sys", f"Export → {path}"))
+
+    def _load_result_image(self, path: Path) -> None:
+        try:
+            surf = pygame.image.load(str(path)).convert()
+            self.result_image = surf
+            self.result_image_path = path
+        except Exception:
+            self.result_image = None
+            self.result_image_path = path if path.exists() else None
+
+    def _render_image_from_mesh(self, mesh, open_viewers: bool = True) -> Optional[Path]:
+        """Fotoreal PNG via ultra pipeline; toont resultaat in preview."""
+        try:
+            from neotorch.ultraphoto import render_ultra
+
+            verts = mesh.vertex_count
+            spp = max(self.ultra_spp, 64)
+            if self.reallife_mode or self.create_mode == "image":
+                spp = max(spp, 80)
+            if verts > 40_000:
+                w, h, spp = 720, 540, max(48, spp // 2)
+            elif verts > 15_000:
+                w, h, spp = 800, 600, max(64, spp)
+            else:
+                w, h, spp = 960, 720, spp
+            img, _obj = render_ultra(mesh, width=w, height=h, spp=spp, open_viewers=open_viewers)
+            self._load_result_image(img)
+            return img
+        except Exception as e:
+            self.chat.append(ChatLine("sys", f"Fotoreal fout: {e}"))
+            return None
 
     def render_photoreal(self) -> None:
         """Ultra pipeline: JS · Java · Python · Java · C++ · Rust · C."""
@@ -413,29 +501,17 @@ class NeoTorchStudio:
         )
         self.draw()
         pygame.display.flip()
-        try:
-            from neotorch.ultraphoto import render_ultra
-
-            verts = mesh.vertex_count
-            spp = self.ultra_spp if self.page in ("ultra", "real") else 64
-            if self.reallife_mode:
-                spp = max(spp, 96)
-            if verts > 40_000:
-                w, h, spp = 720, 540, max(48, spp // 2)
-            elif verts > 15_000:
-                w, h, spp = 800, 600, max(64, spp)
-            else:
-                w, h, spp = 960, 720, spp
-            img, _obj = render_ultra(mesh, width=w, height=h, spp=spp, open_viewers=True)
+        img = self._render_image_from_mesh(mesh, open_viewers=True)
+        if img is not None:
             self.export_msg = f"ULTRA: {img.name}"
             self.export_t = 5.0
             self.status = "Ultra fotoreal klaar"
             self.chat.append(ChatLine("ai", f"ECHTE fotoreal klaar → {img}"))
-        except Exception as e:
+            self._refresh_gallery()
+        else:
             self.status = "Fotoreal fout"
             self.export_msg = "Fotoreal mislukt"
             self.export_t = 3.0
-            self.chat.append(ChatLine("sys", f"Fotoreal fout: {e}"))
 
     # ——— drawing ———
 
@@ -655,8 +731,19 @@ class NeoTorchStudio:
             (r.left + 16, r.top + 38),
         )
 
+        # Mode toggle boven de typebalk
+        for btn, label, active in (
+            (self.mode_model_btn, "3D MODEL", self.create_mode == "model"),
+            (self.mode_image_btn, "AFBEELDING", self.create_mode == "image"),
+        ):
+            fill = ACCENT_DIM if active else PANEL_2
+            draw_round_rect(self.screen, fill, btn, 8)
+            draw_round_rect(self.screen, ACCENT if active else STROKE, btn, 8, 1)
+            t = self.fonts.tiny.render(label, True, TEXT if active else TEXT_DIM)
+            self.screen.blit(t, t.get_rect(center=btn.center))
+
         # Chat area
-        chat_area = pygame.Rect(r.left + 12, r.top + 58, r.width - 24, self.input_rect.top - r.top - 70)
+        chat_area = pygame.Rect(r.left + 12, r.top + 58, r.width - 24, self.mode_model_btn.top - r.top - 70)
         draw_round_rect(self.screen, (16, 18, 24), chat_area, 12)
 
         old_clip = self.screen.get_clip()
@@ -692,7 +779,11 @@ class NeoTorchStudio:
         draw_round_rect(self.screen, PANEL_2, self.input_rect, 10)
         border = ACCENT if self.caret_on else STROKE
         draw_round_rect(self.screen, border, self.input_rect, 10, 1)
-        placeholder = "Beschrijf je 3D-model…"
+        placeholder = (
+            "Beschrijf je fotoreal scene…"
+            if self.create_mode == "image"
+            else "Beschrijf je 3D-model…"
+        )
         shown = self.input_text if self.input_text else placeholder
         col = TEXT if self.input_text else TEXT_MUTED
         txt = self.fonts.body.render(shown[:54], True, col)
@@ -711,7 +802,10 @@ class NeoTorchStudio:
         can = self.wallet.can_afford(self.last_cost) and bool(self.input_text.strip())
         btn_col = ACCENT if can else (70, 62, 48)
         draw_round_rect(self.screen, btn_col, self.gen_btn, 10)
-        label = f"Genereer  (−{self.last_cost})"
+        if self.create_mode == "image":
+            label = f"Maak afbeelding  (−{self.last_cost})"
+        else:
+            label = f"Genereer 3D  (−{self.last_cost})"
         bt = self.fonts.head.render(label, True, (20, 16, 10) if can else TEXT_MUTED)
         self.screen.blit(bt, bt.get_rect(center=self.gen_btn.center))
 
@@ -726,15 +820,29 @@ class NeoTorchStudio:
         if self._preview_buf is None or self._preview_buf_size != size:
             self._preview_buf = pygame.Surface(size)
             self._preview_buf_size = size
-        self.preview.draw(self._preview_buf, self._preview_buf.get_rect())
+
+        show_image = self.create_mode == "image" and self.result_image is not None
+        if show_image:
+            self._preview_buf.fill((10, 12, 16))
+            img = self.result_image
+            iw, ih = img.get_width(), img.get_height()
+            scale = min(inner.width / max(1, iw), inner.height / max(1, ih))
+            dw, dh = max(1, int(iw * scale)), max(1, int(ih * scale))
+            scaled = pygame.transform.smoothscale(img, (dw, dh))
+            self._preview_buf.blit(scaled, ((inner.width - dw) // 2, (inner.height - dh) // 2))
+        else:
+            self.preview.draw(self._preview_buf, self._preview_buf.get_rect())
         self.screen.blit(self._preview_buf, inner.topleft)
         draw_round_rect(self.screen, STROKE, inner, 12, 1)
 
-        title = {
-            "studio": "MODEL PREVIEW",
-            "ultra": "ULTRA PREVIEW",
-            "real": "REAL LIFE PREVIEW",
-        }.get(self.page, "MODEL PREVIEW")
+        if show_image:
+            title = "FOTOREAL AFBEELDING"
+        else:
+            title = {
+                "studio": "MODEL PREVIEW",
+                "ultra": "ULTRA PREVIEW",
+                "real": "REAL LIFE PREVIEW",
+            }.get(self.page, "MODEL PREVIEW")
         self.screen.blit(self.fonts.head.render(title, True, ACCENT), (r.left + 16, r.top + 14))
 
         for btn, label, fill in (

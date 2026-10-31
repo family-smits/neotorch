@@ -11,6 +11,7 @@ from typing import List, Optional, Tuple
 import pygame
 
 from neotorch import Model3DGenerator, export_obj, export_stl
+from neotorch.auth import AuthStore
 from neotorch.mesh import PRACTICAL_MAX_VERTS
 from neotorch.paths import icon_path, output_dir
 from neotorch.preview import MeshPreview
@@ -95,6 +96,7 @@ class NeoTorchStudio:
         self.clock = pygame.time.Clock()
         self.fonts = Fonts()
         self.wallet = TokenWallet()
+        self.auth = AuthStore()
         self.generator = Model3DGenerator(detail=28, deform_strength=0.04, max_verts=100_000)
         self.preview = MeshPreview()
         self.running = True
@@ -109,6 +111,19 @@ class NeoTorchStudio:
         self.gallery_files: List[Path] = []
         self.gallery_scroll = 0
         self.ultra_spp = 96
+
+        # Login (vereist voor Ultra-tab)
+        self.login_user = ""
+        self.login_pass = ""
+        self.login_field = "user"  # "user" | "pass"
+        self.login_error = ""
+        self.login_msg = ""
+        self.login_user_rect = pygame.Rect(0, 0, 0, 0)
+        self.login_pass_rect = pygame.Rect(0, 0, 0, 0)
+        self.login_btn = pygame.Rect(0, 0, 0, 0)
+        self.register_btn = pygame.Rect(0, 0, 0, 0)
+        self.logout_btn = pygame.Rect(0, 0, 0, 0)
+        self.account_btn = pygame.Rect(0, 0, 0, 0)
 
         self.input_text = ""
         self.caret_on = True
@@ -156,9 +171,29 @@ class NeoTorchStudio:
         tx = self.nav_rect.left + 200
         for pid in PAGES:
             label = PAGE_LABELS[pid]
+            if pid == "ultra" and not self.auth.logged_in:
+                label = "ULTRA*"
             tw = max(88, self.fonts.small.size(label)[0] + 28)
             self.nav_btns[pid] = pygame.Rect(tx, self.nav_rect.top + 6, tw, NAV_H - 12)
             tx += tw + 8
+
+        # Account / logout in nav rechts
+        acc_label = self.auth.user if self.auth.logged_in else "Login"
+        aw = max(72, self.fonts.tiny.size(acc_label)[0] + 24)
+        self.account_btn = pygame.Rect(
+            self.nav_rect.right - aw - 12,
+            self.nav_rect.top + 6,
+            aw,
+            NAV_H - 12,
+        )
+        self.logout_btn = pygame.Rect(0, 0, 0, 0)
+        if self.auth.logged_in:
+            self.logout_btn = pygame.Rect(
+                self.account_btn.left - 78,
+                self.nav_rect.top + 6,
+                70,
+                NAV_H - 12,
+            )
 
         top = self.nav_rect.bottom + MARGIN
         bottom = h - MARGIN
@@ -178,6 +213,17 @@ class NeoTorchStudio:
             min(220, self.preview_rect.width - 32),
             36,
         )
+
+        # Login form (centered card)
+        card_w, card_h = 420, 360
+        cx = w // 2 - card_w // 2
+        cy = top + max(20, (bottom - top - card_h) // 2)
+        self.login_user_rect = pygame.Rect(cx + 36, cy + 110, card_w - 72, 40)
+        self.login_pass_rect = pygame.Rect(cx + 36, cy + 180, card_w - 72, 40)
+        bw = (card_w - 72 - 12) // 2
+        self.login_btn = pygame.Rect(cx + 36, cy + 250, bw, 40)
+        self.register_btn = pygame.Rect(cx + 36 + bw + 12, cy + 250, bw, 40)
+        self._login_card = pygame.Rect(cx, cy, card_w, card_h)
 
         pad = 14
         mode_y = self.ai_rect.bottom - 148
@@ -278,15 +324,46 @@ class NeoTorchStudio:
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.logout_btn.width > 0 and self.logout_btn.collidepoint(event.pos):
+                self.auth.logout()
+                self.layout()
+                if self.page in ("ultra", "login"):
+                    self.page = "studio"
+                self.status = "Uitgelogd"
+                self.login_msg = ""
+                self.login_error = ""
+                return
+            if self.account_btn.collidepoint(event.pos):
+                if self.auth.logged_in:
+                    self.status = f"Ingelogd als {self.auth.user}"
+                else:
+                    self.page = "login"
+                    self.login_error = ""
+                    self.login_msg = "Maak een account of log in voor Ultra."
+                    self.status = "Login vereist voor Ultra"
+                    self.layout()
+                return
             for pid, rect in self.nav_btns.items():
                 if rect.collidepoint(event.pos):
+                    if pid == "ultra" and not self.auth.logged_in:
+                        self.page = "login"
+                        self.login_error = ""
+                        self.login_msg = "Log in om Ultra te openen."
+                        self.status = "Login vereist"
+                        self.layout()
+                        return
                     self.page = pid
                     if pid == "gallery":
                         self._refresh_gallery()
                     if pid == "real":
                         self.reallife_mode = True
                     self.status = f"Pagina: {PAGE_LABELS[pid]}"
+                    self.layout()
                     return
+
+        if self.page == "login":
+            self._handle_login_event(event)
+            return
 
         if self.page in ("studio", "real", "ultra"):
             self.preview.handle_event(event, self.preview_rect)
@@ -336,6 +413,68 @@ class NeoTorchStudio:
                 self._update_estimate()
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             self.running = False
+
+    def _handle_login_event(self, event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.login_user_rect.collidepoint(event.pos):
+                self.login_field = "user"
+            elif self.login_pass_rect.collidepoint(event.pos):
+                self.login_field = "pass"
+            elif self.login_btn.collidepoint(event.pos):
+                self._try_login()
+            elif self.register_btn.collidepoint(event.pos):
+                self._try_register()
+            return
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            self.page = "studio"
+            self.status = "Studio"
+            return
+        if event.key == pygame.K_TAB:
+            self.login_field = "pass" if self.login_field == "user" else "user"
+            return
+        if event.key == pygame.K_RETURN:
+            self._try_login()
+            return
+        if event.key == pygame.K_BACKSPACE:
+            if self.login_field == "user":
+                self.login_user = self.login_user[:-1]
+            else:
+                self.login_pass = self.login_pass[:-1]
+            return
+        if event.unicode and event.unicode.isprintable():
+            ch = event.unicode
+            if self.login_field == "user" and len(self.login_user) < 24:
+                self.login_user += ch
+            elif self.login_field == "pass" and len(self.login_pass) < 64:
+                self.login_pass += ch
+
+    def _try_login(self) -> None:
+        ok, msg = self.auth.login(self.login_user, self.login_pass)
+        if ok:
+            self.login_error = ""
+            self.login_msg = msg
+            self.login_pass = ""
+            self.page = "ultra"
+            self.status = msg
+            self.layout()
+        else:
+            self.login_error = msg
+            self.login_msg = ""
+
+    def _try_register(self) -> None:
+        ok, msg = self.auth.register(self.login_user, self.login_pass)
+        if ok:
+            self.login_error = ""
+            self.login_msg = msg
+            self.login_pass = ""
+            self.page = "ultra"
+            self.status = msg
+            self.layout()
+        else:
+            self.login_error = msg
+            self.login_msg = ""
 
     def _handle_gallery_click(self, pos: Tuple[int, int]) -> None:
         # open image with OS / load obj note
@@ -516,9 +655,14 @@ class NeoTorchStudio:
     # ——— drawing ———
 
     def draw(self) -> None:
+        # Ultra nooit tonen zonder login
+        if self.page == "ultra" and not self.auth.logged_in:
+            self.page = "login"
         self.screen.fill(BG)
         self._draw_nav()
-        if self.page == "gallery":
+        if self.page == "login":
+            self._draw_login_page()
+        elif self.page == "gallery":
             self._draw_gallery_page()
         elif self.page == "ultra":
             self._draw_token_panel()
@@ -544,17 +688,91 @@ class NeoTorchStudio:
         brand = self.fonts.head.render("NeoTorch", True, ACCENT)
         self.screen.blit(brand, (self.nav_rect.left + 16, self.nav_rect.centery - brand.get_height() // 2))
         for pid, rect in self.nav_btns.items():
-            active = pid == self.page
+            active = pid == self.page or (pid == "ultra" and self.page == "login")
+            locked = pid == "ultra" and not self.auth.logged_in
             fill = ACCENT_DIM if active else PANEL_2
             draw_round_rect(self.screen, fill, rect, 8)
-            draw_round_rect(self.screen, STROKE if not active else ACCENT, rect, 8, 1)
-            col = TEXT if active else TEXT_DIM
-            t = self.fonts.tiny.render(PAGE_LABELS[pid], True, col)
+            border = WARN if locked else (ACCENT if active else STROKE)
+            draw_round_rect(self.screen, border, rect, 8, 1)
+            col = TEXT if active else (WARN if locked else TEXT_DIM)
+            label = PAGE_LABELS[pid]
+            if locked:
+                label = "ULTRA*"
+            t = self.fonts.tiny.render(label, True, col)
             self.screen.blit(t, t.get_rect(center=rect.center))
-        mode = "REAL LIFE" if self.reallife_mode else "studio"
-        badge = self.fonts.tiny.render(mode, True, OK if self.reallife_mode else TEXT_MUTED)
-        self.screen.blit(badge, (self.nav_rect.right - badge.get_width() - 16,
-                                 self.nav_rect.centery - badge.get_height() // 2))
+
+        if self.logout_btn.width > 0:
+            draw_round_rect(self.screen, PANEL_2, self.logout_btn, 8)
+            draw_round_rect(self.screen, STROKE, self.logout_btn, 8, 1)
+            lo = self.fonts.tiny.render("Logout", True, TEXT_DIM)
+            self.screen.blit(lo, lo.get_rect(center=self.logout_btn.center))
+
+        acc_fill = OK if self.auth.logged_in else PANEL_2
+        draw_round_rect(self.screen, acc_fill, self.account_btn, 8)
+        draw_round_rect(self.screen, ACCENT if self.auth.logged_in else STROKE, self.account_btn, 8, 1)
+        acc_txt = self.auth.user if self.auth.logged_in else "Login"
+        acc_col = (12, 18, 14) if self.auth.logged_in else TEXT_DIM
+        at = self.fonts.tiny.render(acc_txt[:14], True, acc_col)
+        self.screen.blit(at, at.get_rect(center=self.account_btn.center))
+
+    def _draw_login_page(self) -> None:
+        card = getattr(self, "_login_card", pygame.Rect(0, 0, 420, 360))
+        # soft vignette
+        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        overlay.fill((8, 10, 14, 160))
+        self.screen.blit(overlay, (0, 0))
+        draw_round_rect(self.screen, PANEL, card, 18)
+        draw_round_rect(self.screen, ACCENT_DIM, card, 18, 1)
+
+        self.screen.blit(
+            self.fonts.title.render("Ultra — login", True, ACCENT),
+            (card.left + 36, card.top + 28),
+        )
+        self.screen.blit(
+            self.fonts.small.render("Alleen voor leden. Account aanmaken of inloggen.", True, TEXT_DIM),
+            (card.left + 36, card.top + 62),
+        )
+
+        self.screen.blit(self.fonts.tiny.render("Gebruikersnaam", True, TEXT_MUTED),
+                         (self.login_user_rect.left, self.login_user_rect.top - 18))
+        self.screen.blit(self.fonts.tiny.render("Wachtwoord", True, TEXT_MUTED),
+                         (self.login_pass_rect.left, self.login_pass_rect.top - 18))
+
+        for field, rect, value, secret in (
+            ("user", self.login_user_rect, self.login_user, False),
+            ("pass", self.login_pass_rect, self.login_pass, True),
+        ):
+            active = self.login_field == field
+            draw_round_rect(self.screen, PANEL_2, rect, 10)
+            draw_round_rect(self.screen, ACCENT if active else STROKE, rect, 10, 1)
+            shown = ("•" * len(value)) if secret else value
+            if not shown and not active:
+                ph = "••••••••" if secret else "jouw_naam"
+                self.screen.blit(self.fonts.body.render(ph, True, TEXT_MUTED), (rect.left + 12, rect.centery - 9))
+            else:
+                caret = "|" if active and self.caret_on else ""
+                self.screen.blit(
+                    self.fonts.body.render(shown + caret, True, TEXT),
+                    (rect.left + 12, rect.centery - 9),
+                )
+
+        draw_round_rect(self.screen, ACCENT, self.login_btn, 10)
+        lt = self.fonts.head.render("Inloggen", True, (20, 16, 10))
+        self.screen.blit(lt, lt.get_rect(center=self.login_btn.center))
+
+        draw_round_rect(self.screen, PANEL_2, self.register_btn, 10)
+        draw_round_rect(self.screen, STROKE, self.register_btn, 10, 1)
+        rt = self.fonts.head.render("Registreren", True, TEXT)
+        self.screen.blit(rt, rt.get_rect(center=self.register_btn.center))
+
+        y = self.register_btn.bottom + 18
+        if self.login_error:
+            self.screen.blit(self.fonts.small.render(self.login_error, True, DANGER), (card.left + 36, y))
+        elif self.login_msg:
+            self.screen.blit(self.fonts.small.render(self.login_msg, True, OK), (card.left + 36, y))
+        else:
+            tip = self.fonts.tiny.render("Tab wisselt veld · Esc terug naar Studio", True, TEXT_MUTED)
+            self.screen.blit(tip, (card.left + 36, y))
 
     def _draw_gallery_page(self) -> None:
         body = pygame.Rect(MARGIN, self.nav_rect.bottom + MARGIN,

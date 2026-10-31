@@ -9,6 +9,8 @@ venv/
 
 # NeoTorch runtime / secrets
 .neotorch_tokens.json
+.neotorch_auth.json
+.neotorch_session.json
 
 # Build artifacts
 build/

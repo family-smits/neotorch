@@ -97,8 +97,8 @@ class NeoTorchStudio:
         self.caret_t = 0.0
         self.chat: List[ChatLine] = [
             ChatLine("ai", "Welkom bij NeoTorch Studio."),
-            ChatLine("ai", "Beschrijf wat je wilt — de vorm volgt uit je prompt."),
-            ChatLine("sys", "bv. 'storm', 'regen', 'sneeuw', 'vuur', 'rode robot in een bos'"),
+            ChatLine("ai", "Typ ÁLLES — elk woord wordt 3D. Geen vaste lijst."),
+            ChatLine("sys", "bv. 'paarse pizza-draak', 'laptop op een berg', 'ninja met vleugels'"),
         ]
         self.status = "Klaar"
         self.last_cost = 0

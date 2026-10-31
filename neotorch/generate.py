@@ -9,6 +9,7 @@ import numpy as np
 from . import realistic as R
 from .colors import expand_palette, latent_fallback_color, paint_mesh
 from .mesh import PRACTICAL_MAX_VERTS, Mesh
+from .concepts import word_hash
 from .neural_mesh import apply_latent_deform, attach_parts, encode_prompt, neural_blob
 from .primitives import box, cone, cylinder, pyramid, sphere, torus
 from .prompt import PromptPlan, parse_prompt, tokenize
@@ -181,10 +182,10 @@ class Model3DGenerator:
             mesh.name = obj
             return mesh
 
-        if obj == "neural":
-            # Neutrale rotsachtige vorm — geen felle blob
-            mesh = refine(neural_blob(latent, seed, max(16, d), max(10, d // 2), 0.55, mods | {"smooth"}), 1, 2)
-            mesh.name = "neural"
+        if obj in ("neural", "freeform"):
+            label = (actor.label if actor else "") or "freeform"
+            mesh = self._build_freeform(rng, mods, d, latent, seed, label)
+            mesh.name = label
             return mesh
 
         builders = {
@@ -245,12 +246,95 @@ class Model3DGenerator:
 
         builder = builders.get(obj)
         if builder is None:
-            mesh = refine(neural_blob(latent, seed, max(16, d), max(10, d // 2), 0.5, mods | {"smooth"}), 1, 2)
+            label = (actor.label if actor else "") or obj
+            mesh = self._build_freeform(rng, mods, d, latent, seed, label)
+            mesh.name = label
         else:
             mesh = builder()
             mesh = apply_latent_deform(mesh, latent, seed, amount=self.deform_strength * 0.45, modifiers=mods)
+            mesh.name = (actor.label if actor and actor.label else obj)
+        return mesh
 
-        mesh.name = obj
+    def _build_freeform(
+        self,
+        rng: np.random.Generator,
+        mods: set,
+        d: int,
+        latent: np.ndarray,
+        seed: int,
+        label: str,
+    ) -> Mesh:
+        """Unieke assemblage per willekeurig woord (altijd iets anders)."""
+        h = word_hash(label)
+        recipe = h % 8
+        segs = max(14, d)
+        parts: List[Mesh] = []
+
+        if recipe == 0:
+            # gestapelde bollen
+            n = 3 + (h % 4)
+            y = 0.0
+            for i in range(n):
+                r = 0.35 + 0.12 * abs(latent[i % len(latent)]) - i * 0.03
+                parts.append(sphere(max(0.18, r), segs, max(10, segs // 2)).translate([0, y + r, 0]))
+                y += r * 1.55
+        elif recipe == 1:
+            # bloktoren
+            n = 2 + (h % 4)
+            y = 0.0
+            for i in range(n):
+                w = 0.9 - i * 0.12
+                hh = 0.35 + abs(latent[(i + 3) % len(latent)]) * 0.25
+                parts.append(rounded_box(w, hh, w * 0.85, max(10, segs // 2)).translate([0, y + hh * 0.5, 0]))
+                y += hh
+        elif recipe == 2:
+            # kern + stekels
+            parts.append(sphere(0.55, segs, max(10, segs // 2)))
+            for i, a in enumerate(np.linspace(0, 2 * np.pi, 6 + (h % 5), endpoint=False)):
+                parts.append(
+                    cone(0.12, 0.45 + 0.1 * (i % 3), max(8, segs // 2)).translate(
+                        [np.cos(a) * 0.5, 0.1 * (i % 2), np.sin(a) * 0.5]
+                    )
+                )
+        elif recipe == 3:
+            # langwerpig lichaam + kop
+            parts.append(cylinder(0.28, 1.1, segs).translate([0, 0.55, 0]))
+            parts.append(sphere(0.32, segs, max(10, segs // 2)).translate([0, 1.25, 0]))
+            parts.append(box(0.7, 0.12, 0.35).translate([0, 0.08, 0]))
+        elif recipe == 4:
+            # schijf + ring
+            parts.append(cylinder(0.75, 0.18, segs))
+            parts.append(torus(0.55, 0.12, max(16, segs), max(10, segs // 2)).translate([0, 0.2, 0]))
+            parts.append(sphere(0.2, 12, 8).translate([0, 0.45, 0]))
+        elif recipe == 5:
+            # kruisvorm / artefact
+            parts.append(rounded_box(1.2, 0.25, 0.25, 12))
+            parts.append(rounded_box(0.25, 1.0, 0.25, 12).translate([0, 0.2, 0]))
+            parts.append(sphere(0.18, 12, 8).translate([0, 0.75, 0]))
+        elif recipe == 6:
+            # plateau + zuilen
+            parts.append(rounded_box(1.3, 0.12, 1.0, 12).translate([0, 0.06, 0]))
+            for ox, oz in ((-0.45, -0.3), (0.45, -0.3), (-0.45, 0.3), (0.45, 0.3)):
+                parts.append(cylinder(0.08, 0.7, max(10, segs // 2)).translate([ox, 0.45, oz]))
+            parts.append(sphere(0.25, 12, 8).translate([0, 0.95, 0]))
+        else:
+            # asymmetrisch cluster
+            for i in range(5 + (h % 4)):
+                p = rng.normal(0, 0.35, size=3)
+                p[1] = abs(p[1]) + 0.2
+                r = 0.18 + 0.15 * abs(latent[i % len(latent)])
+                if i % 2 == 0:
+                    parts.append(sphere(r, max(12, segs // 2), max(8, segs // 3)).translate(p))
+                else:
+                    parts.append(rounded_box(r * 1.4, r, r * 1.1, 10).translate(p))
+
+        mesh = Mesh.merge(parts, name=label)
+        mesh = refine(mesh, levels=1, smooth_iters=2)
+        mesh = apply_latent_deform(
+            mesh, latent, seed,
+            amount=min(0.14, self.deform_strength + 0.06),
+            modifiers=mods | ({"spiky"} if "spiky" in mods else {"smooth"}),
+        )
         return mesh
 
     @staticmethod

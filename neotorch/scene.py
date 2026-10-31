@@ -18,6 +18,7 @@ class Actor:
     obj: str
     colors: List[RGB] = field(default_factory=list)
     modifiers: Set[str] = field(default_factory=set)
+    label: str = ""  # origineel prompt-woord (voor freeform / slug)
 
 
 SCENE_WORDS = {

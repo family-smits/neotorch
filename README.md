@@ -61,7 +61,8 @@ export_obj(mesh, "output/boom_huis.obj")
 | robot | robot |
 | sword, zwaard | zwaard |
 
-De generator **parst je prompt**: objecten, onderdelen, modifiers **én kleuren**.
+De generator **parst je prompt**: objecten, onderdelen, modifiers **én kleuren**.  
+**Alles mag** — onbekende woorden worden freeform/archetype-meshes (geen vaste whitelist).
 
 ### Kleuren (multi-color)
 Elk model krijgt **meerdere** kleurzones (object-palette + promptkleuren).  

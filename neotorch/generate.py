@@ -10,7 +10,6 @@ from . import realistic as R
 from .colors import expand_palette, latent_fallback_color, paint_mesh
 from .mesh import PRACTICAL_MAX_VERTS, Mesh
 from .concepts import word_hash
-from .life import make_alive, paint_life
 from .neural_mesh import apply_latent_deform, attach_parts, encode_prompt, neural_blob
 from .primitives import box, cone, cylinder, pyramid, sphere, torus
 from .prompt import PromptPlan, parse_prompt, tokenize

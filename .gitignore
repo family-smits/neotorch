@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+# NeoTorch runtime / secrets
+.neotorch_tokens.json
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Native build outputs
+bin/*.exe
+bin/*.pdb
+native/rust/denoise/target/
+*.obj
+*.o
+*.pdb
+
+# Generated meshes / renders
+output/
+*.ntmesh
+*.hdrf
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

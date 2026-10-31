@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NeoTorch · Ultra Photoreal</title>
+  <style>
+    :root {
+      --bg0: #07090d;
+      --bg1: #12161e;
+      --ink: #e8ecf2;
+      --muted: #8b96a8;
+      --accent: #e8a84a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 50% -10%, #2a2218 0%, transparent 55%),
+        linear-gradient(165deg, var(--bg1), var(--bg0));
+    }
+    header {
+      padding: 1.25rem 1.5rem 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.15rem;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .sub { color: var(--muted); font-size: 0.8rem; }
+    main {
+      padding: 0.75rem 1.5rem 2rem;
+      display: grid;
+      place-items: center;
+    }
+    .frame {
+      position: relative;
+      max-width: min(1100px, 96vw);
+      background: #0a0c10;
+      border: 1px solid #2a3344;
+      box-shadow: 0 30px 80px rgba(0,0,0,.55);
+      overflow: hidden;
+    }
+    canvas, img#photo {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      image-rendering: auto;
+    }
+    .bar {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 0.75rem 1.5rem 1.5rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    button {
+      background: var(--accent);
+      color: #1a140a;
+      border: 0;
+      padding: 0.45rem 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid #3a4558;
+    }
+    input[type="file"] { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>NEOTORCH ULTRA PHOTOREAL</h1>
+      <div class="sub">JavaScript viewer · pipeline: JS · Java · Python · Java · C++ · Rust · C</div>
+    </div>
+    <div class="sub" id="meta">laden…</div>
+  </header>
+  <main>
+    <div class="frame">
+      <img id="photo" alt="photoreal render" />
+      <canvas id="fx" style="display:none"></canvas>
+    </div>
+  </main>
+  <div class="bar">
+    <button id="fit">Fit</button>
+    <button class="ghost" id="actual">1:1</button>
+    <label>Open render <input type="file" id="file" accept="image/*" /></label>
+    <span id="info"></span>
+  </div>
+  <script src="viewer.js"></script>
+</body>
+</html>

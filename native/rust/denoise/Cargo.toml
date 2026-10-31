@@ -1,0 +1,11 @@
+[package]
+name = "neotorch_denoise"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "denoise"
+path = "src/main.rs"
+
+[dependencies]
+# zero heavy deps — PNG written manually

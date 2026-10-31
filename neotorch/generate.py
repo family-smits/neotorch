@@ -10,11 +10,13 @@ from . import realistic as R
 from .colors import expand_palette, latent_fallback_color, paint_mesh
 from .mesh import PRACTICAL_MAX_VERTS, Mesh
 from .concepts import word_hash
+from .life import make_alive, paint_life
 from .neural_mesh import apply_latent_deform, attach_parts, encode_prompt, neural_blob
 from .primitives import box, cone, cylinder, pyramid, sphere, torus
 from .prompt import PromptPlan, parse_prompt, tokenize
 from .repair import fix_face_winding
 from .photoreal import apply_photoreal_materials, photoreal_refine, wants_photoreal
+from .reallife import apply_reallife
 from .scene import Actor, compose_scene
 from .smooth import refine, rounded_box
 from .subdivide import enrich_to_budget
@@ -156,7 +158,14 @@ class Model3DGenerator:
 
             combined = fix_face_winding(combined)
             primary = plan.actors[0].obj if plan.actors else "neural"
-            combined = apply_photoreal_materials(combined, obj=primary, seed=plan.seed + 7)
+            if primary not in _WEATHER:
+                # Real-life standaard: maximale organische + micro-AO pass
+                ultra = plan.detail_tier == "ultra" or "reallife" in plan.modifiers
+                combined = apply_reallife(
+                    combined, obj=primary, seed=plan.seed + 77, ultra=ultra,
+                )
+            else:
+                combined = apply_photoreal_materials(combined, obj=primary, seed=plan.seed + 7)
             return combined.normalize(target_size=2.4 if plan.is_scene else 2.0)
         finally:
             self.detail = old_detail

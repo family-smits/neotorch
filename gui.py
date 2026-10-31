@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""NeoTorch Studio — Pygame GUI met token-bar, AI-chat en 3D-preview."""
+"""NeoTorch Studio — multi-page GUI (Studio · Gallery · Ultra · Real Life)."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import pygame
@@ -35,6 +36,14 @@ W, H = 1280, 760
 TOKEN_W = 168
 AI_W = 360
 MARGIN = 16
+NAV_H = 44
+PAGES = ("studio", "gallery", "ultra", "real")
+PAGE_LABELS = {
+    "studio": "STUDIO",
+    "gallery": "GALLERY",
+    "ultra": "ULTRA",
+    "real": "REAL LIFE",
+}
 
 
 @dataclass
@@ -75,7 +84,7 @@ class Fonts:
 class NeoTorchStudio:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("NeoTorch Studio")
+        pygame.display.set_caption("NeoTorch Studio — Real Life")
         self.screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
         try:
             ico = icon_path()
@@ -86,19 +95,25 @@ class NeoTorchStudio:
         self.clock = pygame.time.Clock()
         self.fonts = Fonts()
         self.wallet = TokenWallet()
-        self.generator = Model3DGenerator(detail=20, deform_strength=0.05, max_verts=100_000)
+        self.generator = Model3DGenerator(detail=28, deform_strength=0.04, max_verts=100_000)
         self.preview = MeshPreview()
         self.running = True
         self._preview_buf: Optional[pygame.Surface] = None
         self._preview_buf_size = (0, 0)
 
+        self.page = "studio"
+        self.reallife_mode = True  # standaard max realisme
+        self.gallery_files: List[Path] = []
+        self.gallery_scroll = 0
+        self.ultra_spp = 96
+
         self.input_text = ""
         self.caret_on = True
         self.caret_t = 0.0
         self.chat: List[ChatLine] = [
-            ChatLine("ai", "Welkom bij NeoTorch Studio."),
-            ChatLine("ai", "Typ ÁLLES — elk woord wordt 3D. Geen vaste lijst."),
-            ChatLine("sys", "bv. 'paarse pizza-draak', 'laptop op een berg', 'ninja met vleugels'"),
+            ChatLine("ai", "Welkom bij NeoTorch — REAL LIFE mode aan."),
+            ChatLine("ai", "Pagina's: Studio · Gallery · Ultra · Real Life."),
+            ChatLine("sys", "bv. 'echte rode draak', 'levensechte ninja', 'blauwe kat'"),
         ]
         self.status = "Klaar"
         self.last_cost = 0
@@ -113,6 +128,8 @@ class NeoTorchStudio:
         self.export_t = 0.0
 
         # Layout rects (bijgewerkt in layout())
+        self.nav_rect = pygame.Rect(0, 0, 0, 0)
+        self.nav_btns: dict = {}
         self.token_rect = pygame.Rect(0, 0, 0, 0)
         self.ai_rect = pygame.Rect(0, 0, 0, 0)
         self.preview_rect = pygame.Rect(0, 0, 0, 0)
@@ -121,13 +138,24 @@ class NeoTorchStudio:
         self.export_obj_btn = pygame.Rect(0, 0, 0, 0)
         self.export_stl_btn = pygame.Rect(0, 0, 0, 0)
         self.photo_btn = pygame.Rect(0, 0, 0, 0)
+        self.page_btn = pygame.Rect(0, 0, 0, 0)
         self.layout()
-
+        self._refresh_gallery()
         self._update_estimate()
 
     def layout(self) -> None:
         w, h = self.screen.get_size()
-        top = MARGIN + 8
+        self.nav_rect = pygame.Rect(MARGIN, MARGIN, w - MARGIN * 2, NAV_H)
+        # Nav tabs
+        self.nav_btns = {}
+        tx = self.nav_rect.left + 200
+        for pid in PAGES:
+            label = PAGE_LABELS[pid]
+            tw = max(88, self.fonts.small.size(label)[0] + 28)
+            self.nav_btns[pid] = pygame.Rect(tx, self.nav_rect.top + 6, tw, NAV_H - 12)
+            tx += tw + 8
+
+        top = self.nav_rect.bottom + MARGIN
         bottom = h - MARGIN
         left = MARGIN
 
@@ -138,6 +166,12 @@ class NeoTorchStudio:
             top,
             w - self.ai_rect.right - MARGIN * 2,
             bottom - top,
+        )
+        self.page_btn = pygame.Rect(
+            self.preview_rect.left + 16,
+            self.preview_rect.bottom - 48,
+            min(220, self.preview_rect.width - 32),
+            36,
         )
 
         pad = 14
@@ -161,7 +195,8 @@ class NeoTorchStudio:
         self.export_obj_btn = pygame.Rect(self.export_stl_btn.left - gap - bw, self.preview_rect.top + 14, bw, 30)
 
     def _update_estimate(self) -> None:
-        prompt = self.input_text.strip() or "model"
+        raw = self.input_text.strip() or "model"
+        prompt = self._effective_prompt(raw) if self.input_text.strip() else raw
         cost, shape, diff = self.generator.estimate_cost(prompt)
         plan = self.generator.parse(prompt)
         self.last_cost = cost
@@ -202,6 +237,19 @@ class NeoTorchStudio:
 
         pygame.quit()
 
+    def _refresh_gallery(self) -> None:
+        out = output_dir()
+        files: List[Path] = []
+        for pat in ("*.png", "*.bmp", "*.obj"):
+            files.extend(out.glob(pat))
+        self.gallery_files = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:48]
+
+    def _effective_prompt(self, prompt: str) -> str:
+        p = prompt.strip()
+        if self.reallife_mode and "reallife" not in p.lower() and "echt" not in p.lower():
+            p = f"{p} reallife levend fotorealistisch"
+        return p
+
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             self.running = False
@@ -211,26 +259,45 @@ class NeoTorchStudio:
             self.layout()
             return
 
-        self.preview.handle_event(event, self.preview_rect)
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for pid, rect in self.nav_btns.items():
+                if rect.collidepoint(event.pos):
+                    self.page = pid
+                    if pid == "gallery":
+                        self._refresh_gallery()
+                    if pid == "real":
+                        self.reallife_mode = True
+                    self.status = f"Pagina: {PAGE_LABELS[pid]}"
+                    return
+
+        if self.page in ("studio", "real", "ultra"):
+            self.preview.handle_event(event, self.preview_rect)
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.gen_btn.collidepoint(event.pos):
+            if self.page in ("studio", "real") and self.gen_btn.collidepoint(event.pos):
                 self.generate()
-            elif self.export_obj_btn.collidepoint(event.pos):
+            elif self.page in ("studio", "real", "ultra") and self.export_obj_btn.collidepoint(event.pos):
                 self.export("obj")
-            elif self.export_stl_btn.collidepoint(event.pos):
+            elif self.page in ("studio", "real", "ultra") and self.export_stl_btn.collidepoint(event.pos):
                 self.export("stl")
-            elif self.photo_btn.collidepoint(event.pos):
+            elif self.page in ("studio", "ultra", "real") and self.photo_btn.collidepoint(event.pos):
                 self.render_photoreal()
-            elif event.pos[1] > self.ai_rect.top + 50 and self.ai_rect.collidepoint(event.pos):
-                # scroll zone
-                pass
+            elif self.page == "ultra" and self.page_btn.collidepoint(event.pos):
+                self.render_photoreal()
+            elif self.page == "real" and self.page_btn.collidepoint(event.pos):
+                self.reallife_mode = not self.reallife_mode
+                self.status = "REAL LIFE AAN" if self.reallife_mode else "REAL LIFE UIT"
+            elif self.page == "gallery":
+                self._handle_gallery_click(event.pos)
 
-        if event.type == pygame.MOUSEWHEEL and self.ai_rect.collidepoint(pygame.mouse.get_pos()):
-            if not self.preview_rect.collidepoint(pygame.mouse.get_pos()):
-                self.scroll = max(0, self.scroll - event.y * 28)
+        if event.type == pygame.MOUSEWHEEL:
+            if self.page == "gallery":
+                self.gallery_scroll = max(0, self.gallery_scroll - event.y * 36)
+            elif self.ai_rect.collidepoint(pygame.mouse.get_pos()):
+                if not self.preview_rect.collidepoint(pygame.mouse.get_pos()):
+                    self.scroll = max(0, self.scroll - event.y * 28)
 
-        if event.type == pygame.KEYDOWN:
+        if event.type == pygame.KEYDOWN and self.page in ("studio", "real"):
             if event.key == pygame.K_RETURN:
                 self.generate()
             elif event.key == pygame.K_BACKSPACE:
@@ -241,10 +308,29 @@ class NeoTorchStudio:
             elif event.unicode and event.unicode.isprintable() and len(self.input_text) < 120:
                 self.input_text += event.unicode
                 self._update_estimate()
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self.running = False
+
+    def _handle_gallery_click(self, pos: Tuple[int, int]) -> None:
+        # open image with OS / load obj note
+        body = pygame.Rect(MARGIN, self.nav_rect.bottom + MARGIN, self.screen.get_width() - MARGIN * 2,
+                           self.screen.get_height() - self.nav_rect.bottom - MARGIN * 2)
+        y = body.top + 56 - self.gallery_scroll
+        for f in self.gallery_files:
+            row = pygame.Rect(body.left + 20, y, body.width - 40, 36)
+            if row.collidepoint(pos):
+                try:
+                    import os
+                    os.startfile(str(f))  # noqa: S606 — user gallery open
+                    self.status = f"Open: {f.name}"
+                except Exception as e:
+                    self.status = f"Kan niet openen: {e}"
+                return
+            y += 42
 
     def generate(self) -> None:
-        prompt = self.input_text.strip()
-        if not prompt:
+        prompt = self._effective_prompt(self.input_text)
+        if not self.input_text.strip():
             self.chat.append(ChatLine("sys", "Typ eerst een prompt."))
             return
 
@@ -331,12 +417,15 @@ class NeoTorchStudio:
             from neotorch.ultraphoto import render_ultra
 
             verts = mesh.vertex_count
+            spp = self.ultra_spp if self.page in ("ultra", "real") else 64
+            if self.reallife_mode:
+                spp = max(spp, 96)
             if verts > 40_000:
-                w, h, spp = 640, 480, 48
+                w, h, spp = 720, 540, max(48, spp // 2)
             elif verts > 15_000:
-                w, h, spp = 720, 540, 64
+                w, h, spp = 800, 600, max(64, spp)
             else:
-                w, h, spp = 800, 600, 96
+                w, h, spp = 960, 720, spp
             img, _obj = render_ultra(mesh, width=w, height=h, spp=spp, open_viewers=True)
             self.export_msg = f"ULTRA: {img.name}"
             self.export_t = 5.0
@@ -352,22 +441,112 @@ class NeoTorchStudio:
 
     def draw(self) -> None:
         self.screen.fill(BG)
-        self._draw_header_glow()
-        self._draw_token_panel()
-        self._draw_ai_panel()
-        self._draw_preview_panel()
+        self._draw_nav()
+        if self.page == "gallery":
+            self._draw_gallery_page()
+        elif self.page == "ultra":
+            self._draw_token_panel()
+            self._draw_ultra_page()
+        elif self.page == "real":
+            self._draw_token_panel()
+            self._draw_ai_panel()
+            self._draw_preview_panel()
+            self._draw_real_overlay()
+        else:
+            self._draw_token_panel()
+            self._draw_ai_panel()
+            self._draw_preview_panel()
 
-    def _draw_header_glow(self) -> None:
-        # Subtiele amber glow bovenaan
-        glow = pygame.Surface((self.screen.get_width(), 120), pygame.SRCALPHA)
-        for i in range(120):
-            a = int(28 * (1 - i / 120))
+    def _draw_nav(self) -> None:
+        glow = pygame.Surface((self.screen.get_width(), 100), pygame.SRCALPHA)
+        for i in range(100):
+            a = int(24 * (1 - i / 100))
             pygame.draw.line(glow, (*ACCENT_DIM, a), (0, i), (self.screen.get_width(), i))
         self.screen.blit(glow, (0, 0))
-        brand = self.fonts.title.render("NeoTorch Studio", True, TEXT)
-        self.screen.blit(brand, (MARGIN, 10))
-        sub = self.fonts.tiny.render("lokaal · geen API-keys", True, TEXT_MUTED)
-        self.screen.blit(sub, (MARGIN + brand.get_width() + 12, 20))
+        draw_round_rect(self.screen, PANEL, self.nav_rect, 12)
+        draw_round_rect(self.screen, STROKE_SOFT, self.nav_rect, 12, 1)
+        brand = self.fonts.head.render("NeoTorch", True, ACCENT)
+        self.screen.blit(brand, (self.nav_rect.left + 16, self.nav_rect.centery - brand.get_height() // 2))
+        for pid, rect in self.nav_btns.items():
+            active = pid == self.page
+            fill = ACCENT_DIM if active else PANEL_2
+            draw_round_rect(self.screen, fill, rect, 8)
+            draw_round_rect(self.screen, STROKE if not active else ACCENT, rect, 8, 1)
+            col = TEXT if active else TEXT_DIM
+            t = self.fonts.tiny.render(PAGE_LABELS[pid], True, col)
+            self.screen.blit(t, t.get_rect(center=rect.center))
+        mode = "REAL LIFE" if self.reallife_mode else "studio"
+        badge = self.fonts.tiny.render(mode, True, OK if self.reallife_mode else TEXT_MUTED)
+        self.screen.blit(badge, (self.nav_rect.right - badge.get_width() - 16,
+                                 self.nav_rect.centery - badge.get_height() // 2))
+
+    def _draw_gallery_page(self) -> None:
+        body = pygame.Rect(MARGIN, self.nav_rect.bottom + MARGIN,
+                           self.screen.get_width() - MARGIN * 2,
+                           self.screen.get_height() - self.nav_rect.bottom - MARGIN * 2)
+        draw_round_rect(self.screen, PANEL, body, 16)
+        self.screen.blit(self.fonts.head.render("GALLERY — output", True, ACCENT), (body.left + 20, body.top + 16))
+        self.screen.blit(
+            self.fonts.tiny.render("Klik om te openen · scroll om te bladeren", True, TEXT_MUTED),
+            (body.left + 20, body.top + 38),
+        )
+        y = body.top + 64 - self.gallery_scroll
+        if not self.gallery_files:
+            self.screen.blit(
+                self.fonts.body.render("Nog geen exports. Genereer + ULTRA of Export.", True, TEXT_DIM),
+                (body.left + 20, body.top + 80),
+            )
+            return
+        for f in self.gallery_files:
+            row = pygame.Rect(body.left + 16, y, body.width - 32, 36)
+            if row.bottom < body.top + 56 or row.top > body.bottom - 12:
+                y += 42
+                continue
+            draw_round_rect(self.screen, PANEL_2, row, 8)
+            kind = f.suffix.upper().lstrip(".")
+            self.screen.blit(self.fonts.tiny.render(kind, True, ACCENT), (row.left + 12, row.centery - 7))
+            self.screen.blit(self.fonts.body.render(f.name[:48], True, TEXT), (row.left + 56, row.centery - 9))
+            y += 42
+
+    def _draw_ultra_page(self) -> None:
+        # Preview + big render CTA
+        self._draw_preview_panel()
+        r = self.preview_rect
+        info = pygame.Rect(self.ai_rect.left, self.ai_rect.top, self.ai_rect.width, self.ai_rect.height)
+        draw_round_rect(self.screen, PANEL, info, 16)
+        self.screen.blit(self.fonts.head.render("ULTRA PATH TRACE", True, ACCENT), (info.left + 16, info.top + 16))
+        lines = [
+            "C meshpack → C++ GGX → Rust denoise",
+            "→ Java viewer → JS browser",
+            "",
+            f"Samples: {self.ultra_spp} spp",
+            "REAL LIFE materials: aan" if self.reallife_mode else "REAL LIFE: uit",
+            "",
+            "1) Genereer op Studio/Real",
+            "2) Druk RENDER ULTRA",
+        ]
+        y = info.top + 52
+        for line in lines:
+            self.screen.blit(self.fonts.body.render(line, True, TEXT_DIM), (info.left + 16, y))
+            y += 26
+        draw_round_rect(self.screen, ACCENT, self.page_btn, 10)
+        bt = self.fonts.head.render("RENDER ULTRA", True, (20, 16, 10))
+        # page_btn may be under preview; place CTA in AI column
+        cta = pygame.Rect(info.left + 16, info.bottom - 56, info.width - 32, 40)
+        draw_round_rect(self.screen, ACCENT, cta, 10)
+        self.screen.blit(bt, bt.get_rect(center=cta.center))
+        self.page_btn = cta  # click target
+
+    def _draw_real_overlay(self) -> None:
+        cta = self.page_btn
+        fill = OK if self.reallife_mode else PANEL_2
+        draw_round_rect(self.screen, fill, cta, 10)
+        draw_round_rect(self.screen, STROKE, cta, 10, 1)
+        label = "REAL LIFE: AAN" if self.reallife_mode else "REAL LIFE: UIT"
+        t = self.fonts.head.render(label, True, (12, 18, 14) if self.reallife_mode else TEXT_DIM)
+        self.screen.blit(t, t.get_rect(center=cta.center))
+        tip = self.fonts.tiny.render("Micro-AO · organische huid · adem · ultra detail", True, TEXT_MUTED)
+        self.screen.blit(tip, (cta.left, cta.top - 18))
 
     def _draw_token_panel(self) -> None:
         r = self.token_rect
@@ -551,7 +730,12 @@ class NeoTorchStudio:
         self.screen.blit(self._preview_buf, inner.topleft)
         draw_round_rect(self.screen, STROKE, inner, 12, 1)
 
-        self.screen.blit(self.fonts.head.render("MODEL PREVIEW", True, ACCENT), (r.left + 16, r.top + 14))
+        title = {
+            "studio": "MODEL PREVIEW",
+            "ultra": "ULTRA PREVIEW",
+            "real": "REAL LIFE PREVIEW",
+        }.get(self.page, "MODEL PREVIEW")
+        self.screen.blit(self.fonts.head.render(title, True, ACCENT), (r.left + 16, r.top + 14))
 
         for btn, label, fill in (
             (self.export_obj_btn, "OBJ", PANEL_2),

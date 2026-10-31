@@ -8,6 +8,13 @@ Lokale 3D-modelgenerator in Python. Gebruikt **NeoTorch** — een eigen minimale
 pip install -r requirements.txt
 ```
 
+## Pagina's (GUI)
+
+- **STUDIO** — prompt → levend 3D-model  
+- **GALLERY** — exports uit `output/`  
+- **ULTRA** — C/C++/Rust/Java/JS path-trace render  
+- **REAL LIFE** — max realisme (micro-AO, organische huid, adem, ultra detail)
+
 ## Één EXE (alles erin)
 
 ```bash

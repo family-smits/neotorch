@@ -73,6 +73,18 @@ MODIFIERS: Dict[str, str] = {
     "foto": "photoreal", "realistic": "realistic", "realistisch": "realistic",
     "realistische": "realistic", "cinematic": "cinematic", "cinematisch": "cinematic",
     "mooi": "ornate", "beautiful": "ornate", "cool": "tech",
+    # leven
+    "alive": "alive", "leven": "alive", "levend": "alive", "levende": "alive",
+    "living": "alive", "organic": "alive", "organisch": "alive", "organische": "alive",
+    "adem": "alive", "ademhaling": "alive", "breathing": "alive", "breathe": "alive",
+    "pulse": "alive", "hart": "alive", "heart": "alive", "soul": "alive", "ziel": "alive",
+    "vital": "alive", "vitaal": "alive", "flesh": "alive", "vlees": "alive",
+    "huid": "alive", "skin": "alive",
+    # real-life
+    "real": "reallife", "reallife": "reallife", "reality": "reallife",
+    "echt": "reallife", "echte": "reallife", "lifelike": "reallife",
+    "levensecht": "reallife", "levensechte": "reallife", "irl": "reallife",
+    "hyperreal": "reallife", "hyperrealistisch": "reallife",
 }
 
 CONNECTIVES = {
@@ -128,17 +140,19 @@ class PromptPlan:
 
     @property
     def detail_tier(self) -> str:
-        if "ultra" in self.modifiers or "photoreal" in self.modifiers:
-            return "ultra" if "ultra" in self.modifiers else "complex"
+        if "reallife" in self.modifiers or "ultra" in self.modifiers:
+            return "ultra"
+        if "photoreal" in self.modifiers:
+            return "complex"
         if "complex" in self.modifiers or "cinematic" in self.modifiers:
             return "complex"
-        if "detailed" in self.modifiers or "realistic" in self.modifiers:
+        if "detailed" in self.modifiers or "realistic" in self.modifiers or "alive" in self.modifiers:
             return "detailed"
         return "normal"
 
     @property
     def photoreal(self) -> bool:
-        return bool(self.modifiers & {"photoreal", "realistic", "cinematic"})
+        return bool(self.modifiers & {"photoreal", "realistic", "cinematic", "reallife", "alive"})
 
     @property
     def label(self) -> str:

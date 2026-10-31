@@ -167,10 +167,15 @@ def build_humanoid(rng: np.random.Generator, mods: Set[str], detail: int) -> Mes
     head = ellipsoid(0.18 * sx, 0.22 * sy, 0.2 * sz, d, max(8, d // 2)).translate([0, 1.72 * sy, 0])
     neck = capsule(0.06 * sx, 0.12 * sy, 10, 6).translate([0, 1.52 * sy, 0])
     torso = ellipsoid(0.28 * sx, 0.38 * sy, 0.18 * sz, d, max(8, d // 2)).translate([0, 1.2 * sy, 0])
+    # Ademende borstkas-volume
+    chest = ellipsoid(0.3 * sx, 0.22 * sy, 0.2 * sz, d, max(8, d // 2)).translate([0, 1.28 * sy, 0.04 * sz])
     pelvis = ellipsoid(0.26 * sx, 0.14 * sy, 0.16 * sz, 12, 8).translate([0, 0.85 * sy, 0])
-    parts = [head, neck, torso, pelvis]
-    # Oren / neus hint
+    parts = [head, neck, torso, chest, pelvis]
+    # Gezicht: neus + ogen (levend)
     parts.append(ellipsoid(0.04, 0.05, 0.06, 8, 6).translate([0, 1.7 * sy, 0.18 * sz]))
+    for side in (-1.0, 1.0):
+        parts.append(sphere(0.035 * sx, 10, 8).translate([side * 0.07 * sx, 1.75 * sy, 0.16 * sz]))
+        parts.append(sphere(0.018 * sx, 8, 6).translate([side * 0.07 * sx, 1.75 * sy, 0.19 * sz]))
     for side in (-1.0, 1.0):
         parts.append(sphere(0.1 * sx, 12, 8).translate([side * 0.32 * sx, 1.35 * sy, 0]))  # schouder
         parts.append(capsule(0.07 * sx, 0.42 * sy, d, 8).translate([side * 0.38 * sx, 1.05 * sy, 0]))
